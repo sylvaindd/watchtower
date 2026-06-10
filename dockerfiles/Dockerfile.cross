@@ -1,0 +1,53 @@
+#
+# Builder
+#
+# Runs on the NATIVE build platform (the runner's architecture) and uses Go
+# cross-compilation to target the requested platform. Because CGO is disabled,
+# Go produces a static binary for any GOOS/GOARCH without emulation, so this is
+# dramatically faster than building under QEMU.
+#
+# The TARGETOS / TARGETARCH / TARGETVARIANT build args are provided
+# automatically by buildx for each requested --platform.
+#
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+# Version string injected into the binary (e.g. "v1.2.3"). Defaults to a marker
+# when not supplied by the build.
+ARG WATCHTOWER_VERSION=unknown
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /watchtower
+
+# Pre-download modules first so this layer is cached unless go.mod/go.sum change.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Map the buildx arm variant (e.g. "v6"/"v7") to GOARM. Empty for non-arm.
+RUN GOARM="$(echo "${TARGETVARIANT}" | tr -d 'v')" && \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" GOARM="${GOARM}" \
+    go build \
+      -ldflags "-s -w -extldflags '-static' -X github.com/containrrr/watchtower/internal/meta.Version=${WATCHTOWER_VERSION}" \
+      -o /watchtower-bin .
+
+#
+# watchtower
+#
+FROM scratch
+
+LABEL "com.centurylinklabs.watchtower"="true"
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /watchtower-bin /watchtower
+
+EXPOSE 8080
+
+HEALTHCHECK CMD [ "/watchtower", "--health-check" ]
+
+ENTRYPOINT ["/watchtower"]
