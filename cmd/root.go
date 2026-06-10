@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -43,6 +44,7 @@ var (
 	rollingRestart    bool
 	scope             string
 	labelPrecedence   bool
+	namedSchedules    map[string]string
 )
 
 var rootCmd = NewRootCommand()
@@ -86,6 +88,7 @@ func PreRun(cmd *cobra.Command, _ []string) {
 	}
 
 	scheduleSpec, _ = f.GetString("schedule")
+	namedSchedules = flags.GetNamedSchedules()
 
 	flags.GetSecretsFromFiles(cmd)
 	cleanup, noRestart, monitorOnly, timeout = flags.ReadFlags(cmd)
@@ -160,6 +163,10 @@ func Run(c *cobra.Command, names []string) {
 	awaitDockerClient()
 
 	if err := actions.CheckForSanity(client, filter, rollingRestart); err != nil {
+		logNotifyExit(err)
+	}
+
+	if err := actions.CheckSchedules(client, filter, namedSchedules); err != nil {
 		logNotifyExit(err)
 	}
 
@@ -316,28 +323,32 @@ func runUpgradesOnSchedule(c *cobra.Command, filter t.Filter, filtering string, 
 	}
 
 	scheduler := cron.New()
-	err := scheduler.AddFunc(
-		scheduleSpec,
-		func() {
-			select {
-			case v := <-lock:
-				defer func() { lock <- v }()
-				metric := runUpdatesWithNotifications(filter)
-				metrics.RegisterScan(metric)
-			default:
-				// Update was skipped
-				metrics.RegisterScan(nil)
-				log.Debug("Skipped another update already running.")
-			}
 
-			nextRuns := scheduler.Entries()
-			if len(nextRuns) > 0 {
-				log.Debug("Scheduled next run: " + nextRuns[0].Next.String())
-			}
-		})
+	// Discover which per-container override schedules are actually in use so we
+	// can register a dedicated cron entry for each distinct schedule. This is
+	// resolved once, at startup; a container added later with a brand-new inline
+	// schedule will be folded into the global entry (with a warning) until the
+	// next restart. Named schedules are unaffected since their entries are
+	// derived from the declared names.
+	overrideSpecs := discoverOverrideSchedules(filter)
 
-	if err != nil {
+	// The global entry handles every container that does not define a recognized
+	// override (or whose override resolves back to the global spec).
+	globalFilter := filters.FilterByGlobalSchedule(namedSchedules, scheduleSpec, filter)
+	if err := scheduler.AddFunc(scheduleSpec, makeScheduledRun(scheduler, globalFilter, lock)); err != nil {
 		return err
+	}
+
+	// One additional entry per distinct override spec (excluding the global one).
+	for _, spec := range overrideSpecs {
+		if spec == scheduleSpec {
+			continue
+		}
+		specFilter := filters.FilterBySchedule(spec, namedSchedules, scheduleSpec, filter)
+		if err := scheduler.AddFunc(spec, makeScheduledRun(scheduler, specFilter, lock)); err != nil {
+			return fmt.Errorf("failed to register schedule %q: %w", spec, err)
+		}
+		log.WithField("schedule", spec).Debug("Registered per-container schedule")
 	}
 
 	writeStartupMessage(c, scheduler.Entries()[0].Schedule.Next(time.Now()), filtering)
@@ -354,6 +365,58 @@ func runUpgradesOnSchedule(c *cobra.Command, filter t.Filter, filtering string, 
 	log.Info("Waiting for running update to be finished...")
 	<-lock
 	return nil
+}
+
+// makeScheduledRun builds the callback registered for a cron entry. It runs an
+// update for the containers matched by entryFilter, guarded by the shared lock
+// so that only one update runs at a time across all entries.
+func makeScheduledRun(scheduler *cron.Cron, entryFilter t.Filter, lock chan bool) func() {
+	return func() {
+		select {
+		case v := <-lock:
+			defer func() { lock <- v }()
+			metric := runUpdatesWithNotifications(entryFilter)
+			metrics.RegisterScan(metric)
+		default:
+			// Update was skipped
+			metrics.RegisterScan(nil)
+			log.Debug("Skipped another update already running.")
+		}
+
+		nextRuns := scheduler.Entries()
+		if len(nextRuns) > 0 {
+			log.Debug("Scheduled next run: " + nextRuns[0].Next.String())
+		}
+	}
+}
+
+// discoverOverrideSchedules lists the currently selected containers and returns
+// the set of distinct, recognized per-container schedule specs in use. Unknown
+// schedule-name references and missing overrides are ignored here (those
+// containers are handled by the global entry). Errors listing containers are
+// logged and result in no override entries, leaving every container on the
+// global schedule.
+func discoverOverrideSchedules(filter t.Filter) []string {
+	containers, err := client.ListContainers(filter)
+	if err != nil {
+		log.WithError(err).Warn("Could not list containers to resolve per-container schedules; using the global schedule for all")
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	var specs []string
+	for _, cont := range containers {
+		spec, isOverride := filters.ResolveSchedule(cont, namedSchedules, scheduleSpec)
+		if !isOverride || spec == scheduleSpec {
+			continue
+		}
+		if _, ok := seen[spec]; ok {
+			continue
+		}
+		seen[spec] = struct{}{}
+		specs = append(specs, spec)
+	}
+	return specs
 }
 
 func runUpdatesWithNotifications(filter t.Filter) *metrics.Metric {

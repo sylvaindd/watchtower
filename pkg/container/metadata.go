@@ -11,6 +11,8 @@ const (
 	dependsOnLabel         = "com.centurylinklabs.watchtower.depends-on"
 	zodiacLabel            = "com.centurylinklabs.zodiac.original-image"
 	scope                  = "com.centurylinklabs.watchtower.scope"
+	scheduleLabel          = "com.centurylinklabs.watchtower.schedule"
+	scheduleNameLabel      = "com.centurylinklabs.watchtower.schedule-name"
 	preCheckLabel          = "com.centurylinklabs.watchtower.lifecycle.pre-check"
 	postCheckLabel         = "com.centurylinklabs.watchtower.lifecycle.post-check"
 	preUpdateLabel         = "com.centurylinklabs.watchtower.lifecycle.pre-update"

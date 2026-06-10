@@ -10,6 +10,7 @@ import (
 	"github.com/containrrr/watchtower/pkg/sorter"
 	"github.com/containrrr/watchtower/pkg/types"
 
+	"github.com/robfig/cron"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,6 +32,52 @@ func CheckForSanity(client container.Client, filter types.Filter, rollingRestart
 			}
 		}
 	}
+	return nil
+}
+
+// CheckSchedules validates the named schedules and the per-container schedule
+// labels before starting. It returns an error if:
+//   - a declared named schedule has an invalid cron expression, or
+//   - a container's inline .schedule label has an invalid cron expression, or
+//   - a container's .schedule-name label references a name that is not declared
+//     in the named schedules.
+//
+// named maps lowercased schedule names to their cron specs (as produced by
+// flags.GetNamedSchedules).
+func CheckSchedules(client container.Client, filter types.Filter, named map[string]string) error {
+	for name, spec := range named {
+		if _, err := cron.Parse(spec); err != nil {
+			return fmt.Errorf("named schedule %q has an invalid cron expression %q: %w", name, spec, err)
+		}
+	}
+
+	containers, err := client.ListContainers(filter)
+	if err != nil {
+		return err
+	}
+
+	for _, c := range containers {
+		if inline, ok := c.Schedule(); ok && inline != "" {
+			if _, err := cron.Parse(inline); err != nil {
+				return fmt.Errorf(
+					"container %q has an invalid schedule label %q: %w",
+					c.Name(), inline, err,
+				)
+			}
+			// Inline schedule takes precedence; no need to validate the name.
+			continue
+		}
+
+		if scheduleName, ok := c.ScheduleName(); ok && scheduleName != "" {
+			if _, declared := named[scheduleName]; !declared {
+				return fmt.Errorf(
+					"container %q references undeclared schedule-name %q (declare it via WATCHTOWER_SCHEDULE_NAMED_%s)",
+					c.Name(), scheduleName, scheduleName,
+				)
+			}
+		}
+	}
+
 	return nil
 }
 

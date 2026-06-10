@@ -392,6 +392,36 @@ Environment Variable: WATCHTOWER_SCHEDULE
              Default: -
 ```
 
+## Per-container scheduling
+Individual containers can override the global schedule (`--interval`/`--schedule`) and be checked on
+their own cadence using labels. This is resolved at startup: one cron entry is registered per distinct
+schedule in use.
+
+There are two label styles:
+
+-   **Inline cron**: set `com.centurylinklabs.watchtower.schedule` on the container to a raw
+    [cron expression](https://pkg.go.dev/github.com/robfig/cron@v1.2.0?tab=doc#hdr-CRON_Expression_Format)
+    (6 fields) or a descriptor such as `@every 6h`.
+-   **Named schedule**: declare named schedules on watchtower via indexed environment variables of the
+    form `WATCHTOWER_SCHEDULE_NAMED_<NAME>=<cron-spec>`, then reference one from a container with
+    `com.centurylinklabs.watchtower.schedule-name=<name>` (case-insensitive).
+
+Resolution precedence (most specific wins): inline `schedule` > `schedule-name` > global schedule.
+If a container sets both labels, the inline `schedule` is used and a warning is logged.
+
+If a `schedule-name` references a name that is not declared, watchtower fails at startup with a clear
+error. A container that gains a brand-new inline schedule **after** watchtower has started is folded
+into the global schedule (with a warning) until the next restart.
+
+Manual triggers — `--run-once` and the HTTP API `/v1/update` endpoint — ignore per-container schedules
+and update all matching containers.
+
+```text
+Environment Variable: WATCHTOWER_SCHEDULE_NAMED_<NAME>
+                Type: String (cron expression)
+             Default: -
+```
+
 ## Rolling restart
 Restart one image at time instead of stopping and starting all at once.  Useful in conjunction with lifecycle hooks
 to implement zero-downtime deploy.

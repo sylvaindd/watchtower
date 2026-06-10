@@ -337,3 +337,24 @@ func TestFlagsArePrecentInDocumentation(t *testing.T) {
 		}
 	}
 }
+
+func TestGetNamedSchedules(t *testing.T) {
+	// Indexed named-schedule env vars are read directly from os.Environ().
+	t.Setenv("WATCHTOWER_SCHEDULE_NAMED_NIGHTLY", "0 0 4 * * *")
+	t.Setenv("WATCHTOWER_SCHEDULE_NAMED_FREQUENT", "@every 30m")
+	// Empty value is skipped.
+	t.Setenv("WATCHTOWER_SCHEDULE_NAMED_EMPTY", "")
+
+	schedules := GetNamedSchedules()
+
+	assert.Equal(t, "0 0 4 * * *", schedules["nightly"])
+	assert.Equal(t, "@every 30m", schedules["frequent"])
+	_, hasEmpty := schedules["empty"]
+	assert.False(t, hasEmpty, "entries with empty values should be skipped")
+}
+
+func TestGetNamedSchedulesEmpty(t *testing.T) {
+	// No matching env vars -> empty (non-nil) map.
+	schedules := GetNamedSchedules()
+	assert.NotNil(t, schedules)
+}

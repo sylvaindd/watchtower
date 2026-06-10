@@ -331,3 +331,123 @@ func TestBuildFilterDisableContainer(t *testing.T) {
 	assert.False(t, filter(container))
 	container.AssertExpectations(t)
 }
+
+const globalSchedule = "@every 24h"
+
+var namedSchedules = map[string]string{
+	"nightly":  "0 0 4 * * *",
+	"frequent": "@every 30m",
+}
+
+func TestResolveScheduleNoOverride(t *testing.T) {
+	container := new(mocks.FilterableContainer)
+	container.On("Schedule").Return("", false)
+	container.On("ScheduleName").Return("", false)
+
+	spec, isOverride := ResolveSchedule(container, namedSchedules, globalSchedule)
+	assert.Equal(t, globalSchedule, spec)
+	assert.False(t, isOverride)
+	container.AssertExpectations(t)
+}
+
+func TestResolveScheduleInline(t *testing.T) {
+	container := new(mocks.FilterableContainer)
+	container.On("Schedule").Return("@every 6h", true)
+	container.On("ScheduleName").Return("", false)
+
+	spec, isOverride := ResolveSchedule(container, namedSchedules, globalSchedule)
+	assert.Equal(t, "@every 6h", spec)
+	assert.True(t, isOverride)
+	container.AssertExpectations(t)
+}
+
+func TestResolveScheduleNamed(t *testing.T) {
+	container := new(mocks.FilterableContainer)
+	container.On("Schedule").Return("", false)
+	container.On("ScheduleName").Return("nightly", true)
+
+	spec, isOverride := ResolveSchedule(container, namedSchedules, globalSchedule)
+	assert.Equal(t, "0 0 4 * * *", spec)
+	assert.True(t, isOverride)
+	container.AssertExpectations(t)
+}
+
+func TestResolveScheduleInlineWinsOverName(t *testing.T) {
+	// When both labels are set, the inline schedule wins (and a warning is logged,
+	// which requires Name()).
+	container := new(mocks.FilterableContainer)
+	container.On("Name").Return("dual")
+	container.On("Schedule").Return("@every 6h", true)
+	container.On("ScheduleName").Return("nightly", true)
+
+	spec, isOverride := ResolveSchedule(container, namedSchedules, globalSchedule)
+	assert.Equal(t, "@every 6h", spec)
+	assert.True(t, isOverride)
+	container.AssertExpectations(t)
+}
+
+func TestResolveScheduleUnknownNameFallsBackToGlobal(t *testing.T) {
+	// Unknown named schedule -> falls back to global (and warns, requiring Name()).
+	container := new(mocks.FilterableContainer)
+	container.On("Name").Return("typo")
+	container.On("Schedule").Return("", false)
+	container.On("ScheduleName").Return("does-not-exist", true)
+
+	spec, isOverride := ResolveSchedule(container, namedSchedules, globalSchedule)
+	assert.Equal(t, globalSchedule, spec)
+	assert.False(t, isOverride)
+	container.AssertExpectations(t)
+}
+
+func TestFilterBySchedule(t *testing.T) {
+	filter := FilterBySchedule("@every 30m", namedSchedules, globalSchedule, NoFilter)
+	assert.NotNil(t, filter)
+
+	// Container on the matching named schedule passes.
+	matching := new(mocks.FilterableContainer)
+	matching.On("Schedule").Return("", false)
+	matching.On("ScheduleName").Return("frequent", true)
+	assert.True(t, filter(matching))
+	matching.AssertExpectations(t)
+
+	// Container on a different named schedule does not.
+	other := new(mocks.FilterableContainer)
+	other.On("Schedule").Return("", false)
+	other.On("ScheduleName").Return("nightly", true)
+	assert.False(t, filter(other))
+	other.AssertExpectations(t)
+
+	// Container with no override does not match a non-global entry.
+	plain := new(mocks.FilterableContainer)
+	plain.On("Schedule").Return("", false)
+	plain.On("ScheduleName").Return("", false)
+	assert.False(t, filter(plain))
+	plain.AssertExpectations(t)
+}
+
+func TestFilterByGlobalSchedule(t *testing.T) {
+	filter := FilterByGlobalSchedule(namedSchedules, globalSchedule, NoFilter)
+	assert.NotNil(t, filter)
+
+	// No override -> belongs to the global entry.
+	plain := new(mocks.FilterableContainer)
+	plain.On("Schedule").Return("", false)
+	plain.On("ScheduleName").Return("", false)
+	assert.True(t, filter(plain))
+	plain.AssertExpectations(t)
+
+	// A recognized override -> excluded from the global entry.
+	overridden := new(mocks.FilterableContainer)
+	overridden.On("Schedule").Return("@every 6h", true)
+	overridden.On("ScheduleName").Return("", false)
+	assert.False(t, filter(overridden))
+	overridden.AssertExpectations(t)
+
+	// Unknown schedule-name resolves back to global -> folded into the global entry.
+	unknown := new(mocks.FilterableContainer)
+	unknown.On("Name").Return("typo")
+	unknown.On("Schedule").Return("", false)
+	unknown.On("ScheduleName").Return("does-not-exist", true)
+	assert.True(t, filter(unknown))
+	unknown.AssertExpectations(t)
+}

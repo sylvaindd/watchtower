@@ -416,6 +416,37 @@ func envDuration(key string) time.Duration {
 	return viper.GetDuration(key)
 }
 
+// namedScheduleEnvPrefix is the prefix for indexed environment variables that
+// declare named schedules, e.g. WATCHTOWER_SCHEDULE_NAMED_NIGHTLY="0 0 4 * * *".
+const namedScheduleEnvPrefix = "WATCHTOWER_SCHEDULE_NAMED_"
+
+// GetNamedSchedules scans the process environment for indexed named-schedule
+// variables of the form WATCHTOWER_SCHEDULE_NAMED_<NAME>=<cron-spec> and
+// returns a map keyed by the lowercased <NAME> suffix. These are read directly
+// from os.Environ() rather than through viper, because the set of names is
+// dynamic and cannot be statically bound.
+//
+// Entries with an empty name suffix or an empty value are skipped.
+func GetNamedSchedules() map[string]string {
+	schedules := make(map[string]string)
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, namedScheduleEnvPrefix) {
+			continue
+		}
+		kv := strings.SplitN(env, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimPrefix(kv[0], namedScheduleEnvPrefix))
+		spec := kv[1]
+		if name == "" || spec == "" {
+			continue
+		}
+		schedules[name] = spec
+	}
+	return schedules
+}
+
 // SetDefaults provides default values for environment variables
 func SetDefaults() {
 	viper.AutomaticEnv()

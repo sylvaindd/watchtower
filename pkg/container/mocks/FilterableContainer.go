@@ -79,6 +79,52 @@ func (_m *FilterableContainer) Scope() (string, bool) {
 	return r0, r1
 }
 
+// Schedule provides a mock function with given fields:
+func (_m *FilterableContainer) Schedule() (string, bool) {
+	ret := _m.Called()
+
+	var r0 string
+
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	var r1 bool
+
+	if rf, ok := ret.Get(1).(func() bool); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
+// ScheduleName provides a mock function with given fields:
+func (_m *FilterableContainer) ScheduleName() (string, bool) {
+	ret := _m.Called()
+
+	var r0 string
+
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	var r1 bool
+
+	if rf, ok := ret.Get(1).(func() bool); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
 // ImageName provides a mock function with given fields:
 func (_m *FilterableContainer) ImageName() string {
 	ret := _m.Called()

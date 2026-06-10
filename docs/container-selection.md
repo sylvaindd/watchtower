@@ -79,3 +79,36 @@ docker run -d --label=com.centurylinklabs.watchtower.monitor-only=true someimage
 ```
 
 When the label is specified on a container, watchtower treats that container exactly as if [`WATCHTOWER_MONITOR_ONLY`](https://containrrr.dev/watchtower/arguments/#without_updating_containers) was set, but the effect is limited to the individual container. 
+
+## Per-container schedule
+
+Individual containers can be checked on their own schedule instead of the global `--interval`/`--schedule`. See [Per-container scheduling](https://containrrr.dev/watchtower/arguments/#per-container_scheduling) for the full description of precedence and behavior.
+
+Set an inline cron expression directly on the container:
+
+```docker
+LABEL com.centurylinklabs.watchtower.schedule="0 0 4 * * *"
+```
+
+Or reference a named schedule declared on watchtower via `WATCHTOWER_SCHEDULE_NAMED_<NAME>`:
+
+=== "docker-compose"
+
+    ``` yaml
+    version: "3"
+    services:
+      watchtower:
+        image: containrrr/watchtower
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+        environment:
+          # declare a named schedule "nightly"
+          - WATCHTOWER_SCHEDULE_NAMED_NIGHTLY=0 0 4 * * *
+      someimage:
+        container_name: someimage
+        labels:
+          # use the "nightly" named schedule
+          - "com.centurylinklabs.watchtower.schedule-name=nightly"
+    ```
+
+If both `schedule` and `schedule-name` are set on the same container, the inline `schedule` wins and a warning is logged. Referencing an undeclared `schedule-name` causes watchtower to fail at startup.

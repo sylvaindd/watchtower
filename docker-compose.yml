@@ -10,7 +10,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - 8080:8080
-    command: --interval 10 --http-api-metrics --http-api-token demotoken --debug prometheus grafana parent child
+    environment:
+      # Declare a named schedule "frequent" that demo containers can reference
+      # via the com.centurylinklabs.watchtower.schedule-name label.
+      WATCHTOWER_SCHEDULE_NAMED_FREQUENT: "@every 20s"
+    command: --interval 10 --http-api-metrics --http-api-token demotoken --debug prometheus grafana parent child scheduled-named scheduled-inline
   prometheus:
     container_name: prometheus
     image: prom/prometheus
@@ -37,6 +41,18 @@ services:
     labels:
       com.centurylinklabs.watchtower.depends-on: parent
     container_name: child
+  scheduled-named:
+    image: nginx:alpine
+    container_name: scheduled-named
+    labels:
+      # Checked on the "frequent" named schedule declared on the watchtower service
+      com.centurylinklabs.watchtower.schedule-name: frequent
+  scheduled-inline:
+    image: nginx:alpine
+    container_name: scheduled-inline
+    labels:
+      # Checked on its own inline cron schedule (overrides the global --interval)
+      com.centurylinklabs.watchtower.schedule: "@every 45s"
 
 volumes:
   prometheus: {}

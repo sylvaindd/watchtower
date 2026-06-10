@@ -54,6 +54,8 @@ type Container interface {
 	Enabled() (bool, bool)
 	IsMonitorOnly(UpdateParams) bool
 	Scope() (string, bool)
+	Schedule() (string, bool)
+	ScheduleName() (string, bool)
 	Links() []string
 	ToRestart() bool
 	IsWatchtower() bool

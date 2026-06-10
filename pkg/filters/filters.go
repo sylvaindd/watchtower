@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	t "github.com/containrrr/watchtower/pkg/types"
+	log "github.com/sirupsen/logrus"
 )
 
 // WatchtowerContainersFilter filters only watchtower containers
@@ -97,6 +98,71 @@ func FilterByScope(scope string, baseFilter t.Filter) t.Filter {
 			return baseFilter(c)
 		}
 
+		return false
+	}
+}
+
+// ResolveSchedule determines the effective cron schedule spec for a container.
+//
+// Precedence (most specific wins):
+//  1. the inline .schedule label (raw cron expression)
+//  2. the .schedule-name label, resolved against the named schedules map
+//  3. the global schedule spec (fallback)
+//
+// The returned isOverride is true when the container defines its own schedule
+// (either inline or named) that differs from the global spec. When a container
+// sets both the inline and the named label, the inline value wins and a warning
+// is logged. When a .schedule-name references a name that is not declared in
+// named, the container falls back to the global spec and isOverride is false.
+func ResolveSchedule(c t.FilterableContainer, named map[string]string, globalSpec string) (spec string, isOverride bool) {
+	inline, hasInline := c.Schedule()
+	name, hasName := c.ScheduleName()
+
+	if hasInline && inline != "" {
+		if hasName && name != "" {
+			log.WithField("container", c.Name()).
+				Warnf("Container defines both a schedule and a schedule-name label; using the inline schedule %q and ignoring schedule-name %q", inline, name)
+		}
+		return inline, true
+	}
+
+	if hasName && name != "" {
+		if resolved, ok := named[name]; ok {
+			return resolved, true
+		}
+		// Unknown named schedule: CheckForSanity rejects this at startup, but be
+		// defensive at runtime and fall back to the global schedule.
+		log.WithField("container", c.Name()).
+			Warnf("Container references unknown schedule-name %q; falling back to the global schedule", name)
+		return globalSpec, false
+	}
+
+	return globalSpec, false
+}
+
+// FilterBySchedule returns a filter matching containers whose effective
+// schedule (resolved via ResolveSchedule) equals targetSpec. It is used to
+// build a dedicated cron entry per distinct schedule.
+func FilterBySchedule(targetSpec string, named map[string]string, globalSpec string, baseFilter t.Filter) t.Filter {
+	return func(c t.FilterableContainer) bool {
+		spec, _ := ResolveSchedule(c, named, globalSpec)
+		if spec == targetSpec {
+			return baseFilter(c)
+		}
+		return false
+	}
+}
+
+// FilterByGlobalSchedule returns a filter matching only containers that run on
+// the global schedule, i.e. that do not define a recognized per-container
+// override. Containers whose override resolves to the global spec (because of
+// an unknown schedule-name) are folded into the global entry as well.
+func FilterByGlobalSchedule(named map[string]string, globalSpec string, baseFilter t.Filter) t.Filter {
+	return func(c t.FilterableContainer) bool {
+		spec, isOverride := ResolveSchedule(c, named, globalSpec)
+		if !isOverride || spec == globalSpec {
+			return baseFilter(c)
+		}
 		return false
 	}
 }

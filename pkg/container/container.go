@@ -169,6 +169,30 @@ func (c Container) Scope() (string, bool) {
 	return rawString, true
 }
 
+// Schedule returns the value of the inline cron schedule label and if the
+// label was set. The value is a raw cron expression (e.g. "0 0 4 * * *" or
+// "@every 6h") that overrides the global update schedule for this container.
+func (c Container) Schedule() (string, bool) {
+	rawString, ok := c.getLabelValue(scheduleLabel)
+	if !ok {
+		return "", false
+	}
+
+	return rawString, true
+}
+
+// ScheduleName returns the value of the named schedule label and if the label
+// was set. The value references a named schedule declared via the
+// WATCHTOWER_SCHEDULE_NAMED_<NAME> environment variables.
+func (c Container) ScheduleName() (string, bool) {
+	rawString, ok := c.getLabelValue(scheduleNameLabel)
+	if !ok {
+		return "", false
+	}
+
+	return rawString, true
+}
+
 // Links returns a list containing the names of all the containers to which
 // this container is linked.
 func (c Container) Links() []string {
