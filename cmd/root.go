@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -339,7 +340,24 @@ func runUpgradesOnSchedule(c *cobra.Command, filter t.Filter, filtering string, 
 		return err
 	}
 
+	// Report which named schedules were declared, so misconfiguration (e.g. a
+	// typo'd name or an env var that did not load) is visible at startup.
+	if len(namedSchedules) > 0 {
+		names := make([]string, 0, len(namedSchedules))
+		for name := range namedSchedules {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			log.WithFields(log.Fields{
+				"name":     name,
+				"schedule": namedSchedules[name],
+			}).Info("Declared named schedule")
+		}
+	}
+
 	// One additional entry per distinct override spec (excluding the global one).
+	registeredOverrides := 0
 	for _, spec := range overrideSpecs {
 		if spec == scheduleSpec {
 			continue
@@ -348,7 +366,23 @@ func runUpgradesOnSchedule(c *cobra.Command, filter t.Filter, filtering string, 
 		if err := scheduler.AddFunc(spec, makeScheduledRun(scheduler, specFilter, lock)); err != nil {
 			return fmt.Errorf("failed to register schedule %q: %w", spec, err)
 		}
-		log.WithField("schedule", spec).Debug("Registered per-container schedule")
+		registeredOverrides++
+
+		// Report the next fire time for this override entry. The global startup
+		// message only covers the primary schedule, so without this the first run
+		// of a per-container schedule (e.g. a fast "@every 5m") would be invisible.
+		// Entry.Next is only populated after scheduler.Start(), so parse the spec
+		// directly to compute the upcoming run.
+		logEntry := log.WithField("schedule", spec)
+		if parsed, perr := cron.Parse(spec); perr == nil {
+			next := parsed.Next(time.Now())
+			logEntry = logEntry.WithField("next-run", next.Format("2006-01-02 15:04:05 -0700 MST"))
+		}
+		logEntry.Info("Registered per-container schedule")
+	}
+
+	if registeredOverrides == 0 && len(namedSchedules) > 0 {
+		log.Info("No running containers currently use a per-container schedule override; all containers will use the global schedule until a matching container starts and Watchtower is restarted")
 	}
 
 	writeStartupMessage(c, scheduler.Entries()[0].Schedule.Next(time.Now()), filtering)
